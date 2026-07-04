@@ -2,6 +2,7 @@ import json
 import sys
 import tempfile
 import unittest
+import unittest.mock
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
@@ -136,6 +137,16 @@ class ProviderTests(unittest.TestCase):
             config = provider._load_config(home)
             self.assertEqual(config["account_id"], "acct-1")
             self.assertEqual(config["profile"], "me")
+
+    def test_is_available_reads_config_before_initialize(self):
+        provider = memflare.MemflareMemoryProvider()
+        with tempfile.TemporaryDirectory() as home:
+            provider.save_config({"account_id": "acct-1", "namespace": "ns"}, home)
+            env = {"HERMES_HOME": home, "CLOUDFLARE_API_TOKEN": "token-1"}
+            with unittest.mock.patch.dict("os.environ", env, clear=False):
+                self.assertTrue(provider.is_available())
+            with unittest.mock.patch.dict("os.environ", {"HERMES_HOME": home}, clear=True):
+                self.assertFalse(provider.is_available())  # token missing
 
     def test_register_wires_provider(self):
         registered = []

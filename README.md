@@ -30,10 +30,10 @@ Once active, Hermes automatically gets:
 npx wrangler agent-memory namespace create hermes-prod
 ```
 
-**2. Install the plugin** into your Hermes plugins directory:
+**2. Install the plugin** into the Hermes **memory plugins** directory (note the `memory/` category subdirectory — memory providers are not discovered from the top-level plugins folder):
 
 ```sh
-git clone <this-repo-url> ~/.hermes/plugins/memflare
+git clone <this-repo-url> ~/.hermes/plugins/memory/memflare
 hermes plugins enable memflare
 ```
 

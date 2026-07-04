@@ -65,13 +65,23 @@ class MemflareMemoryProvider(MemoryProvider):
     def name(self):
         return "memflare"
 
-    def is_available(self):
+    def is_available(self, **kwargs):
         """Config presence only — must not make network calls."""
-        config = self._load_config(self._hermes_home)
+        config = self._load_config(self._resolve_hermes_home(kwargs.get("hermes_home")))
         return bool(
             (config.get("account_id") or os.environ.get("CLOUDFLARE_ACCOUNT_ID"))
             and os.environ.get("CLOUDFLARE_API_TOKEN")
             and (config.get("namespace") or os.environ.get("CLOUDFLARE_AGENT_MEMORY_NAMESPACE"))
+        )
+
+    def _resolve_hermes_home(self, explicit=None):
+        """is_available() can be called before initialize(), so fall back to the
+        HERMES_HOME env var / default path when Hermes has not handed us one yet."""
+        return (
+            explicit
+            or self._hermes_home
+            or os.environ.get("HERMES_HOME")
+            or os.path.expanduser("~/.hermes")
         )
 
     # -- configuration -------------------------------------------------------
@@ -114,7 +124,7 @@ class MemflareMemoryProvider(MemoryProvider):
             json.dump(config, handle, indent=2)
 
     def initialize(self, session_id="", **kwargs):
-        self._hermes_home = kwargs.get("hermes_home") or self._hermes_home
+        self._hermes_home = self._resolve_hermes_home(kwargs.get("hermes_home"))
         self._session_id = (session_id or "")[: LIMITS["session_id_chars"]]
         config = self._load_config(self._hermes_home)
         self._profile = config.get("profile") or "hermes"
