@@ -106,7 +106,7 @@ class ProviderTests(unittest.TestCase):
     def test_redaction_scrubs_secrets(self):
         provider = make_provider()
         provider.sync_turn("my key is sk-abcdefghijklmnop1234", None)
-        self.assertIn("[redacted-secret]", provider._buffer[0]["content"])
+        self.assertIn("[redacted-secret]", provider._buffer[0][1]["content"])
 
     def test_on_memory_write_mirrors_to_remember(self):
         provider = make_provider()
@@ -147,6 +147,102 @@ class ProviderTests(unittest.TestCase):
                 self.assertTrue(provider.is_available())
             with unittest.mock.patch.dict("os.environ", {"HERMES_HOME": home}, clear=True):
                 self.assertFalse(provider.is_available())  # token missing
+
+    def test_per_user_profile_isolation(self):
+        env = {
+            "CLOUDFLARE_ACCOUNT_ID": "acct-1",
+            "CLOUDFLARE_API_TOKEN": "token-1",
+            "CLOUDFLARE_AGENT_MEMORY_NAMESPACE": "hermes-prod",
+        }
+        with unittest.mock.patch.dict("os.environ", env, clear=False):
+            gateway = memflare.MemflareMemoryProvider()
+            gateway.initialize("sess-1", hermes_home=None, user_id="tg-12345")
+            self.assertEqual(gateway._profile, "hermes:tg-12345")
+
+            other = memflare.MemflareMemoryProvider()
+            other.initialize("sess-2", hermes_home=None, user_id="tg-67890")
+            self.assertNotEqual(gateway._profile, other._profile)
+
+            cli = memflare.MemflareMemoryProvider()
+            cli.initialize("sess-3", hermes_home=None)
+            self.assertEqual(cli._profile, "hermes")
+
+            # Sanitized-but-distinct raw IDs must never collapse together.
+            a = memflare.MemflareMemoryProvider()
+            a.initialize("s", hermes_home=None, user_id="user 1")
+            b = memflare.MemflareMemoryProvider()
+            b.initialize("s", hermes_home=None, user_id="user@1")
+            self.assertNotEqual(a._profile, b._profile)
+
+    def test_non_primary_contexts_never_write(self):
+        env = {
+            "CLOUDFLARE_ACCOUNT_ID": "acct-1",
+            "CLOUDFLARE_API_TOKEN": "token-1",
+            "CLOUDFLARE_AGENT_MEMORY_NAMESPACE": "hermes-prod",
+        }
+        with unittest.mock.patch.dict("os.environ", env, clear=False):
+            provider = memflare.MemflareMemoryProvider()
+            provider.initialize("sess-1", hermes_home=None, agent_context="cron")
+        provider._client = FakeClient()
+
+        provider.sync_turn("cron prompt", "cron response")
+        self.assertEqual(len(provider._buffer), 0)
+        provider.on_memory_write("add", "memory", "should not mirror")
+        provider.on_session_end()
+        self.assertEqual(provider._client.calls, [])
+
+    def test_session_switch_flushes_old_session_before_adopting_new(self):
+        provider = make_provider()
+        provider.sync_turn("hello from A", "hi A")
+        provider.on_session_switch("sess-2")
+
+        ingests = [c for c in provider._client.calls if c[0] == "ingest"]
+        self.assertEqual(len(ingests), 1)
+        self.assertEqual(ingests[0][3], "sess-1")
+        self.assertEqual(provider._session_id, "sess-2")
+        self.assertEqual(len(provider._buffer), 0)
+
+        provider.sync_turn("hello from B", "hi B")
+        provider.on_session_end()
+        ingests = [c for c in provider._client.calls if c[0] == "ingest"]
+        self.assertEqual(ingests[-1][3], "sess-2")
+
+    def test_interleaved_sessions_flush_under_their_own_ids(self):
+        provider = make_provider()
+        provider.sync_turn("turn in A", "reply in A", session_id="chat-a")
+        provider.sync_turn("turn in B", "reply in B", session_id="chat-b")
+        provider.on_session_end()
+
+        ingests = {c[3]: c[2] for c in provider._client.calls if c[0] == "ingest"}
+        self.assertEqual(set(ingests), {"chat-a", "chat-b"})
+        self.assertEqual(ingests["chat-a"][0]["content"], "turn in A")
+        self.assertEqual(ingests["chat-b"][0]["content"], "turn in B")
+
+    def test_queue_prefetch_warms_cache_for_next_turn(self):
+        provider = make_provider()
+        provider.queue_prefetch("user preferences")
+        provider._prefetch_thread.join(timeout=5)
+        recalls_after_warm = len([c for c in provider._client.calls if c[0] == "recall"])
+        self.assertEqual(recalls_after_warm, 1)
+
+        answer = provider.prefetch("user preferences")
+        self.assertEqual(answer, "You prefer concise answers.")
+        # Served from cache — no second recall.
+        recalls = [c for c in provider._client.calls if c[0] == "recall"]
+        self.assertEqual(len(recalls), 1)
+
+        # Cache is consumed once; a different query falls back to live recall.
+        provider.prefetch("something else")
+        recalls = [c for c in provider._client.calls if c[0] == "recall"]
+        self.assertEqual(len(recalls), 2)
+
+    def test_pre_compress_flushes_buffered_turns(self):
+        provider = make_provider()
+        provider.sync_turn("about to be compressed", "yes")
+        result = provider.on_pre_compress([])
+        self.assertEqual(result, "")
+        ingests = [c for c in provider._client.calls if c[0] == "ingest"]
+        self.assertEqual(len(ingests), 1)
 
     def test_register_wires_provider(self):
         registered = []

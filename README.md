@@ -10,6 +10,7 @@ Cloudflare Agent Memory is in private beta. Memflare follows the public beta doc
 
 Once active, Hermes automatically gets:
 
+- **Per-person memory isolation**: when Hermes supplies a gateway user identity (Telegram/Discord/Slack), memory is scoped to `<profile>:<user_id>` — participants in group chats never read or write each other's memory. Single-user CLI sessions use the configured base profile directly.
 - **Memory tools** the model can call: `memory_recall`, `memory_list`, `memory_get`, `memory_summary`, `memory_remember`, `memory_delete`.
 - **Automatic checkpoint ingestion**: conversation turns are buffered and ingested in the background (non-blocking), letting Cloudflare extract durable facts, events, instructions, and tasks. Cloudflare's `ingest` is idempotent, so checkpoints never create duplicates.
 - **Built-in memory mirroring**: writes to Hermes's own `MEMORY.md`/`USER.md` are mirrored to Cloudflare via `remember()`.
@@ -69,24 +70,27 @@ Cloudflare Agent Memory stores data as `namespace > profile > session > memories
 | Cloudflare concept | Memflare usage |
 | --- | --- |
 | Namespace | One per environment (e.g. `hermes-dev`, `hermes-prod`), set in config |
-| Profile | One per Hermes profile (`profile` config field, default `hermes`) |
-| Session | The Hermes session ID passed to `initialize()` |
+| Profile | **One per person**: `<base>:<user_id>` for gateway users, the base `profile` config value (default `hermes`) for single-user CLI |
+| Session | The Hermes session ID, captured per turn (interleaved chats never mis-tag) |
 | Memory types | `fact`, `event`, `instruction`, `task` (Cloudflare-classified) |
 
-Use separate namespaces for hard environment boundaries, and separate `profile` values if multiple Hermes profiles share one namespace.
+Gateway user IDs are sanitized before use in profile names; any ID that sanitization alters gets a stable hash suffix so distinct raw IDs can never collapse into the same profile. Use separate namespaces for hard environment boundaries, and separate base `profile` values if multiple Hermes profiles share one namespace.
 
 ## Lifecycle hooks implemented
 
 | Hook | Behavior |
 | --- | --- |
 | `system_prompt_block()` | Injects the memory policy into the system prompt |
-| `prefetch(query)` | Short synthesized recall for context injection; fails silently |
-| `sync_turn(user, assistant)` | Buffers turns; flushes to `ingest` in a daemon thread every 12 messages (never blocks the agent loop) |
+| `prefetch(query)` | Serves the background-warmed recall cache, falling back to a live short recall; fails silently |
+| `queue_prefetch(query)` | Warms the recall cache for the next turn in a daemon thread |
+| `sync_turn(user, assistant, session_id=…)` | Buffers turns tagged with their session at capture time; flushes to `ingest` in a daemon thread every 12 messages (never blocks the agent loop) |
+| `on_session_switch(new_session_id)` | Flushes the old session's buffered turns, then adopts the new session ID |
 | `on_session_end(messages)` | Flushes any remaining buffered turns |
+| `on_pre_compress(messages)` | Flushes before context compression so turns aren't lost with the compressed transcript |
 | `on_memory_write(action, target, content)` | Mirrors built-in memory adds/replaces to Cloudflare in the background |
 | `shutdown()` | Final flush |
 
-Failed background flushes re-queue their messages for the next checkpoint rather than dropping them.
+Writes are disabled entirely in non-primary agent contexts (`cron`, `flush`, `subagent`) so scheduled jobs and subagent chatter never pollute a person's memory. Failed background flushes re-queue their messages for the next checkpoint rather than dropping them, and interleaved sessions each flush under their own session ID.
 
 ## Tool handler contract
 

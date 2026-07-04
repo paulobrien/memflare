@@ -83,6 +83,31 @@ def validate_profile(name):
     return _require_str(name, "profile", max_chars=LIMITS["profile_name_chars"])
 
 
+def sanitize_profile_component(value, max_chars=LIMITS["profile_name_chars"]):
+    """Make an arbitrary identifier (gateway user ID, etc.) safe for use inside
+    a profile name. Any identifier sanitization ALTERS gets a stable hash suffix
+    so distinct raw IDs (e.g. 'user 1' vs 'user@1') can never collapse into the
+    same profile."""
+    raw = str(value or "").strip()
+    normalized = re.sub(r"[^A-Za-z0-9._:-]+", "-", raw).strip("-")
+    if not normalized:
+        raise MemflareError("profile component must contain usable characters.")
+    suffix = "-" + _fnv1a_hex(raw)[:8]
+    if max_chars <= len(suffix):
+        return _fnv1a_hex(raw)[:max(max_chars, 1)]
+    if normalized == raw and len(normalized) <= max_chars:
+        return normalized
+    return normalized[: max_chars - len(suffix)] + suffix
+
+
+def _fnv1a_hex(value):
+    hash_value = 0xCBF29CE484222325
+    for byte in value.encode("utf-8"):
+        hash_value ^= byte
+        hash_value = (hash_value * 0x100000001B3) & 0xFFFFFFFFFFFFFFFF
+    return f"{hash_value:016x}"
+
+
 def validate_session_id(session_id):
     if session_id is None or session_id == "":
         return None

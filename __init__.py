@@ -3,6 +3,12 @@
 Activate with:
     hermes memory setup            # interactive
     hermes config set memory.provider memflare
+
+Isolation model: memory is scoped per PERSON. When Hermes supplies a gateway
+user identity (Telegram/Discord/Slack sessions), the Cloudflare profile is
+derived as "<base>:<user_id>" so participants in shared chats never read or
+write each other's memory. Without a user identity (single-user CLI), the
+configured base profile is used directly.
 """
 
 import json
@@ -11,10 +17,15 @@ import re
 import threading
 
 try:
-    from .client import LIMITS, MemflareClient, MemflareError
+    from .client import (
+        LIMITS,
+        MemflareClient,
+        MemflareError,
+        sanitize_profile_component,
+    )
     from .schemas import ALL_TOOLS
 except ImportError:  # loaded flat (tests / direct execution) rather than as a package
-    from client import LIMITS, MemflareClient, MemflareError
+    from client import LIMITS, MemflareClient, MemflareError, sanitize_profile_component
     from schemas import ALL_TOOLS
 
 try:
@@ -24,6 +35,10 @@ except ImportError:  # outside a Hermes runtime (tests, tooling)
 
 CONFIG_FILENAME = "memflare.json"
 FLUSH_THRESHOLD_MESSAGES = 12
+
+# Writes are disabled outside primary agent contexts: cron system prompts and
+# subagent chatter would corrupt the user's memory representation.
+NON_WRITE_CONTEXTS = frozenset({"cron", "flush", "subagent"})
 
 SYSTEM_PROMPT_BLOCK = (
     "Long-term memory (Cloudflare Agent Memory) is active.\n"
@@ -52,12 +67,21 @@ def _redact(text):
 class MemflareMemoryProvider(MemoryProvider):
     def __init__(self):
         self._client = None
+        self._base_profile = "hermes"
         self._profile = "hermes"
         self._session_id = ""
         self._hermes_home = None
+        self._write_enabled = True
+        # Buffer entries are (session_id, message) captured at append time, so a
+        # flush can never tag another conversation's turns with the wrong session.
         self._buffer = []
         self._lock = threading.Lock()
         self._flush_thread = None
+        # queue_prefetch() populates this cache in the background; prefetch()
+        # consumes it on the next turn so the hot path stays fast.
+        self._prefetch_query = None
+        self._prefetch_result = None
+        self._prefetch_thread = None
 
     # -- identity / availability --------------------------------------------
 
@@ -111,7 +135,10 @@ class MemflareMemoryProvider(MemoryProvider):
             },
             {
                 "key": "profile",
-                "description": "Memory profile name inside the namespace",
+                "description": (
+                    "Base memory profile. Gateway users are isolated automatically "
+                    "as <profile>:<user_id>; single-user CLI uses this value directly"
+                ),
                 "default": "hermes",
                 "required": False,
             },
@@ -128,15 +155,29 @@ class MemflareMemoryProvider(MemoryProvider):
 
     def initialize(self, session_id="", **kwargs):
         self._hermes_home = self._resolve_hermes_home(kwargs.get("hermes_home"))
-        self._session_id = (session_id or "")[: LIMITS["session_id_chars"]]
+        self._session_id = self._clip_session(session_id)
+        self._write_enabled = kwargs.get("agent_context", "primary") not in NON_WRITE_CONTEXTS
         config = self._load_config(self._hermes_home)
-        self._profile = config.get("profile") or "hermes"
+        self._base_profile = config.get("profile") or "hermes"
+        self._profile = self._resolve_profile(config, kwargs)
         self._client = MemflareClient(
             account_id=config.get("account_id") or os.environ.get("CLOUDFLARE_ACCOUNT_ID"),
             api_token=os.environ.get("CLOUDFLARE_API_TOKEN") or config.get("api_token"),
             namespace=config.get("namespace")
             or os.environ.get("CLOUDFLARE_AGENT_MEMORY_NAMESPACE"),
         )
+
+    def _resolve_profile(self, config, kwargs):
+        """Per-person isolation: '<base>:<user_id>' when Hermes supplies a
+        gateway user identity, the base profile alone otherwise (CLI)."""
+        user_id = kwargs.get("user_id") or kwargs.get("user_id_alt")
+        if not user_id:
+            return self._base_profile
+        component = sanitize_profile_component(
+            user_id,
+            max_chars=LIMITS["profile_name_chars"] - len(self._base_profile) - 1,
+        )
+        return f"{self._base_profile}:{component}"
 
     def _load_config(self, hermes_home):
         if not hermes_home:
@@ -148,12 +189,37 @@ class MemflareMemoryProvider(MemoryProvider):
         except (OSError, ValueError):
             return {}
 
+    @staticmethod
+    def _clip_session(session_id):
+        return (str(session_id or ""))[: LIMITS["session_id_chars"]]
+
     # -- prompt / recall hooks ------------------------------------------------
 
     def system_prompt_block(self):
         return SYSTEM_PROMPT_BLOCK
 
     def prefetch(self, query, *, session_id="", **kwargs):
+        with self._lock:
+            cached_query, cached = self._prefetch_query, self._prefetch_result
+            self._prefetch_query = self._prefetch_result = None
+        if cached is not None and cached_query == query:
+            return cached
+        return self._recall_quietly(query)
+
+    def queue_prefetch(self, query, *, session_id="", **kwargs):
+        """Warm the recall cache for the NEXT turn in a background thread."""
+        if self._prefetch_thread and self._prefetch_thread.is_alive():
+            return
+
+        def _warm():
+            result = self._recall_quietly(query)
+            with self._lock:
+                self._prefetch_query, self._prefetch_result = query, result
+
+        self._prefetch_thread = threading.Thread(target=_warm, daemon=True)
+        self._prefetch_thread.start()
+
+    def _recall_quietly(self, query):
         try:
             result = self._client.recall(self._profile, query, response_length="short")
             return (result or {}).get("answer") or ""
@@ -163,21 +229,41 @@ class MemflareMemoryProvider(MemoryProvider):
     # -- turn sync (must be non-blocking) --------------------------------------
 
     def sync_turn(self, user, assistant, *, session_id="", messages=None, **kwargs):
+        if not self._write_enabled:
+            return
+        turn_session = self._clip_session(session_id) or self._session_id
         with self._lock:
             if user:
-                self._buffer.append({"role": "user", "content": _redact(str(user))})
+                self._buffer.append((turn_session, {"role": "user", "content": _redact(str(user))}))
             if assistant:
-                self._buffer.append({"role": "assistant", "content": _redact(str(assistant))})
+                self._buffer.append(
+                    (turn_session, {"role": "assistant", "content": _redact(str(assistant))})
+                )
             should_flush = len(self._buffer) >= FLUSH_THRESHOLD_MESSAGES
         if should_flush:
-            self._flush_async(session_id or self._session_id)
+            self._flush_async()
+
+    def on_session_switch(self, new_session_id, *, parent_session_id="", reset=False,
+                          rewound=False, **kwargs):
+        """Flush turns buffered for the old session, then adopt the new session ID
+        so subsequent writes land in the correct session's record."""
+        self._flush()
+        self._session_id = self._clip_session(new_session_id) or self._session_id
+        with self._lock:
+            self._prefetch_query = self._prefetch_result = None
 
     def on_session_end(self, messages=None, **kwargs):
-        self._flush(self._session_id)
+        self._flush()
 
-    def on_memory_write(self, action, target, content, **kwargs):
+    def on_pre_compress(self, messages=None, **kwargs):
+        """Context compression is a natural checkpoint — flush buffered turns so
+        nothing is lost when the transcript is summarized away."""
+        self._flush()
+        return ""
+
+    def on_memory_write(self, action, target, content, metadata=None, **kwargs):
         """Mirror built-in MEMORY.md/USER.md writes into Cloudflare."""
-        if action not in ("add", "replace") or not content:
+        if not self._write_enabled or action not in ("add", "replace") or not content:
             return
         thread = threading.Thread(
             target=self._remember_quietly, args=(content,), daemon=True,
@@ -185,7 +271,7 @@ class MemflareMemoryProvider(MemoryProvider):
         thread.start()
 
     def shutdown(self, **kwargs):
-        self._flush(self._session_id)
+        self._flush()
 
     def _remember_quietly(self, content):
         try:
@@ -194,26 +280,35 @@ class MemflareMemoryProvider(MemoryProvider):
         except Exception:
             pass
 
-    def _flush_async(self, session_id):
+    def _flush_async(self):
         if self._flush_thread and self._flush_thread.is_alive():
             return
-        self._flush_thread = threading.Thread(
-            target=self._flush, args=(session_id,), daemon=True,
-        )
+        self._flush_thread = threading.Thread(target=self._flush, daemon=True)
         self._flush_thread.start()
 
-    def _flush(self, session_id):
+    def _flush(self):
+        if self._client is None:
+            return  # not initialized — leave the buffer intact
         with self._lock:
             batch, self._buffer = self._buffer, []
-        if not batch or self._client is None:
+        if not batch:
             return
-        try:
-            for start in range(0, len(batch), LIMITS["messages_per_ingest"]):
-                chunk = batch[start:start + LIMITS["messages_per_ingest"]]
-                self._client.ingest(self._profile, chunk, session_id=session_id or None)
-        except Exception:
+        # Group by the session captured at append time — interleaved sessions
+        # each ingest under their own session ID.
+        groups = {}
+        for session_id, message in batch:
+            groups.setdefault(session_id, []).append(message)
+        failed = []
+        for session_id, messages in groups.items():
+            try:
+                for start in range(0, len(messages), LIMITS["messages_per_ingest"]):
+                    chunk = messages[start:start + LIMITS["messages_per_ingest"]]
+                    self._client.ingest(self._profile, chunk, session_id=session_id or None)
+            except Exception:
+                failed.extend((session_id, message) for message in messages)
+        if failed:
             with self._lock:
-                self._buffer = batch + self._buffer  # keep for the next checkpoint
+                self._buffer = failed + self._buffer  # keep for the next checkpoint
 
     # -- tools -----------------------------------------------------------------
 
