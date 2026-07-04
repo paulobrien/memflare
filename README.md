@@ -90,7 +90,7 @@ Gateway user IDs are sanitized before use in profile names; any ID that sanitiza
 | `on_memory_write(action, target, content, metadata)` | Mirrors built-in memory writes in the background: adds are remembered, replaces retire the old copy first, and removes propagate as deletes (only ever on a single confident match — ambiguity fails safe) |
 | `shutdown()` | Final flush |
 
-Writes are disabled entirely in non-primary agent contexts (`cron`, `flush`, `subagent`) so scheduled jobs and subagent chatter never pollute a person's memory. Failed background flushes re-queue their messages for the next checkpoint rather than dropping them, and interleaved sessions each flush under their own session ID.
+Writes are disabled entirely in non-primary agent contexts (`cron`, `flush`, `subagent`) — hooks *and* the `memory_remember`/`memory_delete` tools — so scheduled jobs and subagent chatter never pollute a person's memory. Failed background flushes re-queue their messages for the next checkpoint rather than dropping them, and interleaved sessions each flush under their own session ID.
 
 ## Tool handler contract
 

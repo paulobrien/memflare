@@ -21,11 +21,18 @@ try:
         LIMITS,
         MemflareClient,
         MemflareError,
+        clip_session_id,
         sanitize_profile_component,
     )
     from .schemas import ALL_TOOLS
 except ImportError:  # loaded flat (tests / direct execution) rather than as a package
-    from client import LIMITS, MemflareClient, MemflareError, sanitize_profile_component
+    from client import (
+        LIMITS,
+        MemflareClient,
+        MemflareError,
+        clip_session_id,
+        sanitize_profile_component,
+    )
     from schemas import ALL_TOOLS
 
 try:
@@ -196,7 +203,7 @@ class MemflareMemoryProvider(MemoryProvider):
 
     @staticmethod
     def _clip_session(session_id):
-        return (str(session_id or ""))[: LIMITS["session_id_chars"]]
+        return clip_session_id(session_id)
 
     # -- prompt / recall hooks ------------------------------------------------
 
@@ -250,9 +257,10 @@ class MemflareMemoryProvider(MemoryProvider):
 
     def on_session_switch(self, new_session_id, *, parent_session_id="", reset=False,
                           rewound=False, **kwargs):
-        """Flush turns buffered for the old session, then adopt the new session ID
-        so subsequent writes land in the correct session's record."""
-        self._flush()
+        """Flush turns buffered for the old session, then adopt the new session ID.
+        The flush runs in a daemon thread — safe because every buffered turn
+        already carries its own session ID — so session switches never block."""
+        self._flush_async()
         self._session_id = self._clip_session(new_session_id) or self._session_id
         with self._lock:
             self._prefetch_query = self._prefetch_result = None
@@ -261,9 +269,9 @@ class MemflareMemoryProvider(MemoryProvider):
         self._flush()
 
     def on_pre_compress(self, messages=None, **kwargs):
-        """Context compression is a natural checkpoint — flush buffered turns so
-        nothing is lost when the transcript is summarized away."""
-        self._flush()
+        """Context compression is a natural checkpoint — flush buffered turns in
+        the background rather than blocking the compression path."""
+        self._flush_async()
         return ""
 
     def on_memory_write(self, action, target, content, metadata=None, **kwargs):
@@ -404,6 +412,7 @@ class MemflareMemoryProvider(MemoryProvider):
         return self._client.get_summary(self._profile, session_id=args.get("session_id"))
 
     def _tool_memory_remember(self, args):
+        self._assert_writes_allowed()
         result = self._client.remember(
             self._profile,
             _redact(args.get("content", "")),
@@ -412,8 +421,15 @@ class MemflareMemoryProvider(MemoryProvider):
         return {"remembered": True, "result": result}
 
     def _tool_memory_delete(self, args):
+        self._assert_writes_allowed()
         self._client.delete_memory(self._profile, args.get("memory_id", ""))
         return {"deleted": True, "memory_id": args.get("memory_id")}
+
+    def _assert_writes_allowed(self):
+        if not self._write_enabled:
+            raise MemflareError(
+                "Memory writes are disabled in cron/flush/subagent contexts."
+            )
 
 
 def register(ctx):

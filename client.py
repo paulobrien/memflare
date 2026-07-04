@@ -114,6 +114,15 @@ def validate_session_id(session_id):
     return _require_str(session_id, "sessionId", max_chars=LIMITS["session_id_chars"])
 
 
+def clip_session_id(value, max_chars=LIMITS["session_id_chars"]):
+    """Fit a session ID inside Cloudflare's length limit. Over-long IDs keep a
+    stable hash suffix so two IDs sharing a long prefix can never merge."""
+    session = str(value or "")
+    if len(session) <= max_chars:
+        return session
+    return session[: max_chars - 9] + "-" + _fnv1a_hex(session)[:8]
+
+
 def normalize_messages(messages):
     if not isinstance(messages, list) or not messages:
         raise MemflareError("messages must be a non-empty list.")
@@ -297,7 +306,9 @@ class MemflareClient:
                 last_error = error
                 if attempt >= max_attempts - 1 or (error.status is not None and not error.is_retryable):
                     raise
-            except (urllib.error.URLError, TimeoutError, ConnectionError) as error:
+            except OSError as error:
+                # URLError, TimeoutError, ConnectionError, and pre-3.10
+                # socket.timeout are all OSError subclasses.
                 last_error = MemflareError(f"Cloudflare Agent Memory request failed: {error}")
                 if attempt >= max_attempts - 1:
                     raise last_error from error

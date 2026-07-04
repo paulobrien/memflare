@@ -243,6 +243,8 @@ class ProviderTests(unittest.TestCase):
         provider = make_provider()
         provider.sync_turn("hello from A", "hi A")
         provider.on_session_switch("sess-2")
+        if provider._flush_thread:
+            provider._flush_thread.join(timeout=5)
 
         ingests = [c for c in provider._client.calls if c[0] == "ingest"]
         self.assertEqual(len(ingests), 1)
@@ -289,8 +291,30 @@ class ProviderTests(unittest.TestCase):
         provider.sync_turn("about to be compressed", "yes")
         result = provider.on_pre_compress([])
         self.assertEqual(result, "")
+        if provider._flush_thread:
+            provider._flush_thread.join(timeout=5)
         ingests = [c for c in provider._client.calls if c[0] == "ingest"]
         self.assertEqual(len(ingests), 1)
+
+    def test_write_tools_blocked_in_non_primary_contexts(self):
+        provider = make_provider()
+        provider._write_enabled = False
+        result = json.loads(provider.handle_tool_call("memory_remember", {"content": "x"}))
+        self.assertIn("disabled", result["error"])
+        result = json.loads(provider.handle_tool_call("memory_delete", {"memory_id": "mem-1"}))
+        self.assertIn("disabled", result["error"])
+        # Read tools still work.
+        result = json.loads(provider.handle_tool_call("memory_recall", {"query": "prefs"}))
+        self.assertEqual(result["answer"], "You prefer concise answers.")
+
+    def test_long_session_ids_clip_without_merging(self):
+        from client import clip_session_id
+        a = clip_session_id("x" * 70 + "-alpha")
+        b = clip_session_id("x" * 70 + "-omega")
+        self.assertLessEqual(len(a), 64)
+        self.assertLessEqual(len(b), 64)
+        self.assertNotEqual(a, b)
+        self.assertEqual(clip_session_id("short"), "short")
 
     def test_register_wires_provider(self):
         registered = []
