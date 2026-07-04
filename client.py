@@ -6,6 +6,7 @@ re-verify behavior against the docs before production rollout.
 """
 
 import json
+import re
 import time
 import urllib.error
 import urllib.parse
@@ -63,8 +64,19 @@ def _require_str(value, field, max_chars=None, max_bytes=None):
     return value
 
 
+# ULID shape of Cloudflare namespace_id values — a common paste mistake, since
+# the API addresses namespaces by NAME, not ID.
+_NAMESPACE_ID_SHAPE = re.compile(r"^[0-9][0-9A-HJKMNP-TV-Za-hjkmnp-tv-z]{25}$")
+
+
 def validate_namespace(name):
-    return _require_str(name, "namespace", max_chars=LIMITS["namespace_name_chars"])
+    _require_str(name, "namespace", max_chars=LIMITS["namespace_name_chars"])
+    if _NAMESPACE_ID_SHAPE.match(name):
+        raise MemflareError(
+            f"namespace '{name}' looks like a namespace_id. Use the namespace NAME "
+            "(e.g. hermes-prod) — the Cloudflare API addresses namespaces by name."
+        )
+    return name
 
 
 def validate_profile(name):

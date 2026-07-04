@@ -59,6 +59,21 @@ class ClientTests(unittest.TestCase):
         with self.assertRaisesRegex(MemflareError, "non-empty list"):
             client.ingest("user-42", [])
 
+    def test_rejects_namespace_id_instead_of_name(self):
+        with self.assertRaisesRegex(MemflareError, "looks like a namespace_id"):
+            MemflareClient(
+                account_id="acct-123",
+                api_token="token-123",
+                namespace="01KWPF44FYY3Q1NP2N8NX11SBB",
+            )
+        # A lowercased paste of the same ID is also caught.
+        with self.assertRaisesRegex(MemflareError, "looks like a namespace_id"):
+            MemflareClient(
+                account_id="acct-123",
+                api_token="token-123",
+                namespace="01kwpf44fyy3q1np2n8nx11sbb",
+            )
+
     def test_retries_transient_errors_then_succeeds(self):
         calls = {"n": 0}
 

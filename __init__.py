@@ -103,7 +103,10 @@ class MemflareMemoryProvider(MemoryProvider):
             },
             {
                 "key": "namespace",
-                "description": "Agent Memory namespace (max 32 chars)",
+                "description": (
+                    "Agent Memory namespace NAME, e.g. hermes-prod — not the "
+                    "namespace_id shown by wrangler (max 32 chars)"
+                ),
                 "required": True,
             },
             {
