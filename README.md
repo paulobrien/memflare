@@ -30,6 +30,8 @@ Once active, Hermes automatically gets:
 npx wrangler agent-memory namespace create hermes-prod
 ```
 
+Wrangler's output table shows a `namespace_id` — you won't need it. Memflare (and the Cloudflare API) address namespaces by **name** (`hermes-prod` here), so that's the value to use everywhere below.
+
 **2. Install the plugin** into the Hermes **memory plugins** directory (note the `memory/` category subdirectory — memory providers are not discovered from the top-level plugins folder):
 
 ```sh
@@ -49,7 +51,7 @@ or configure directly:
 hermes config set memory.provider memflare
 ```
 
-The setup wizard prompts for the fields from the config schema: your Cloudflare **account ID**, an **API token** with Agent Memory permissions (stored as `CLOUDFLARE_API_TOKEN` in the profile's `.env`), the **namespace**, and an optional **profile** name (defaults to `hermes`). Non-secret values are stored in `$HERMES_HOME/memflare.json`, so each Hermes profile keeps isolated memory configuration.
+The setup wizard prompts for the fields from the config schema: your Cloudflare **account ID**, an **API token** with Agent Memory permissions (stored as `CLOUDFLARE_API_TOKEN` in the profile's `.env`), the **namespace name** (not the `namespace_id`), and an optional **profile** name (defaults to `hermes`). Non-secret values are stored in `$HERMES_HOME/memflare.json`, so each Hermes profile keeps isolated memory configuration.
 
 **4. Verify:**
 
