@@ -1,0 +1,134 @@
+# Memflare
+
+Memflare is a [Hermes Agent](https://hermes-agent.nousresearch.com/) **memory provider plugin** backed by [Cloudflare Agent Memory](https://developers.cloudflare.com/agent-memory/). It gives Hermes durable, growing memory across sessions without Hermes owning a database, vector index, summarizer, or deduplication pipeline.
+
+Cloudflare Agent Memory is in private beta. Memflare follows the public beta docs; re-verify API behavior before relying on it in production.
+
+## What it does
+
+Once active, Hermes automatically gets:
+
+- **Memory tools** the model can call: `memory_recall`, `memory_list`, `memory_get`, `memory_summary`, `memory_remember`, `memory_delete`.
+- **Automatic checkpoint ingestion**: conversation turns are buffered and ingested in the background (non-blocking), letting Cloudflare extract durable facts, events, instructions, and tasks. Cloudflare's `ingest` is idempotent, so checkpoints never create duplicates.
+- **Built-in memory mirroring**: writes to Hermes's own `MEMORY.md`/`USER.md` are mirrored to Cloudflare via `remember()`.
+- **A system-prompt policy block** telling the model when to recall and what is worth remembering.
+- **Secret redaction**: common API-key/token patterns are scrubbed before anything leaves the machine.
+
+## Requirements
+
+- Hermes Agent with plugin support
+- Python 3.9+ (no third-party dependencies — stdlib only)
+- A Cloudflare account with Agent Memory (private beta) enabled
+
+## Install
+
+**1. Create a Cloudflare Agent Memory namespace** (once per environment):
+
+```sh
+npx wrangler agent-memory namespace create hermes-prod
+```
+
+**2. Install the plugin** into your Hermes plugins directory:
+
+```sh
+git clone <this-repo-url> ~/.hermes/plugins/memflare
+hermes plugins enable memflare
+```
+
+**3. Activate it as the memory provider:**
+
+```sh
+hermes memory setup        # interactive picker — choose memflare and enter credentials
+```
+
+or configure directly:
+
+```sh
+hermes config set memory.provider memflare
+```
+
+The setup wizard prompts for the fields from the config schema: your Cloudflare **account ID**, an **API token** with Agent Memory permissions (stored as `CLOUDFLARE_API_TOKEN` in the profile's `.env`), the **namespace**, and an optional **profile** name (defaults to `hermes`). Non-secret values are stored in `$HERMES_HOME/memflare.json`, so each Hermes profile keeps isolated memory configuration.
+
+**4. Verify:**
+
+```sh
+hermes memory status       # shows memflare as the active provider
+hermes memflare status     # checks Cloudflare connectivity
+```
+
+Then ask Hermes "what do you remember about me?" and watch for a `memory_recall` call.
+
+## How memory is organized
+
+Cloudflare Agent Memory stores data as `namespace > profile > session > memories`. Memflare maps:
+
+| Cloudflare concept | Memflare usage |
+| --- | --- |
+| Namespace | One per environment (e.g. `hermes-dev`, `hermes-prod`), set in config |
+| Profile | One per Hermes profile (`profile` config field, default `hermes`) |
+| Session | The Hermes session ID passed to `initialize()` |
+| Memory types | `fact`, `event`, `instruction`, `task` (Cloudflare-classified) |
+
+Use separate namespaces for hard environment boundaries, and separate `profile` values if multiple Hermes profiles share one namespace.
+
+## Lifecycle hooks implemented
+
+| Hook | Behavior |
+| --- | --- |
+| `system_prompt_block()` | Injects the memory policy into the system prompt |
+| `prefetch(query)` | Short synthesized recall for context injection; fails silently |
+| `sync_turn(user, assistant)` | Buffers turns; flushes to `ingest` in a daemon thread every 12 messages (never blocks the agent loop) |
+| `on_session_end(messages)` | Flushes any remaining buffered turns |
+| `on_memory_write(action, target, content)` | Mirrors built-in memory adds/replaces to Cloudflare in the background |
+| `shutdown()` | Final flush |
+
+Failed background flushes re-queue their messages for the next checkpoint rather than dropping them.
+
+## Tool handler contract
+
+All tool handlers follow the Hermes plugin rules: `handle_tool_call(tool_name, args, **kwargs)` always returns a JSON **string** and never raises — validation problems, API errors, and unexpected failures come back as `{"error": ...}` for the model to read.
+
+`memory_remember` and `memory_delete` are deliberately conservative: their descriptions instruct the model to store only durable knowledge and to delete only on explicit user request. Turn-by-turn capture happens through checkpoint ingestion, not model-initiated writes.
+
+## Limits enforced client-side
+
+Memflare validates the documented Cloudflare limits before making requests:
+
+| Limit | Value |
+| --- | --- |
+| Messages per ingest call | 500 (larger buffers are chunked) |
+| Message content size | 32,768 UTF-8 bytes |
+| Recall query size | 1,024 UTF-8 bytes |
+| Session ID length | 64 characters |
+| Profile name length | 100 characters |
+| Namespace name length | 32 characters |
+| List page size | 1–1,000 |
+
+Retry policy: transient statuses (`408`, `425`, `429`, any `5xx`) and network errors are retried with exponential backoff for safe-to-replay calls. `409` conflicts are never retried, and `remember` is never retried because replaying it after a dropped response could store duplicate explicit memories.
+
+## Development
+
+```sh
+python -m unittest discover -s tests -v
+```
+
+Tests use a fake transport/client — no Hermes runtime and no Cloudflare credentials required. If plugin discovery misbehaves, run `HERMES_PLUGINS_DEBUG=1 hermes plugins list`.
+
+## Source map
+
+```txt
+plugin.yaml    Plugin manifest (tools, hooks, required env)
+__init__.py    MemoryProvider implementation + register(ctx) entry point
+client.py      Cloudflare Agent Memory HTTP client (stdlib only)
+schemas.py     Flat Hermes tool schemas
+cli.py         `hermes memflare status` CLI subcommand
+tests/         Unit tests (unittest, no network)
+```
+
+## Official references
+
+- [Hermes plugin guide](https://hermes-agent.nousresearch.com/docs/guides/build-a-hermes-plugin)
+- [Hermes memory provider developer guide](https://hermes-agent.nousresearch.com/docs/developer-guide/memory-provider-plugin)
+- [Cloudflare Agent Memory overview](https://developers.cloudflare.com/agent-memory/)
+- [HTTP API](https://developers.cloudflare.com/agent-memory/api/http-api/)
+- [Limits](https://developers.cloudflare.com/agent-memory/platform/limits/)

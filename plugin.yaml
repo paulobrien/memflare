@@ -1,0 +1,25 @@
+name: memflare
+version: 0.2.0
+description: "Durable cross-session memory backed by Cloudflare Agent Memory (private beta)."
+author: Paul O'Brien
+provides_tools:
+  - memory_recall
+  - memory_list
+  - memory_get
+  - memory_summary
+  - memory_remember
+  - memory_delete
+hooks:
+  - sync_turn
+  - on_session_end
+  - on_memory_write
+  - shutdown
+requires_env:
+  - name: CLOUDFLARE_ACCOUNT_ID
+    description: "Cloudflare account ID that has Agent Memory enabled"
+  - name: CLOUDFLARE_API_TOKEN
+    description: "Cloudflare API token with Agent Memory permissions"
+    secret: true
+    url: "https://dash.cloudflare.com/profile/api-tokens"
+  - name: CLOUDFLARE_AGENT_MEMORY_NAMESPACE
+    description: "Agent Memory namespace (create with: npx wrangler agent-memory namespace create <name>)"
