@@ -13,7 +13,7 @@ Once active, Hermes automatically gets:
 - **Per-person memory isolation**: when Hermes supplies a gateway user identity (Telegram/Discord/Slack), memory is scoped to `<profile>:<user_id>` — participants in group chats never read or write each other's memory. Single-user CLI sessions use the configured base profile directly.
 - **Memory tools** the model can call: `memory_recall`, `memory_list`, `memory_get`, `memory_summary`, `memory_remember`, `memory_delete`.
 - **Automatic checkpoint ingestion**: conversation turns are buffered and ingested in the background (non-blocking), letting Cloudflare extract durable facts, events, instructions, and tasks. Cloudflare's `ingest` is idempotent, so checkpoints never create duplicates.
-- **Built-in memory mirroring**: writes to Hermes's own `MEMORY.md`/`USER.md` are mirrored to Cloudflare via `remember()`.
+- **Full built-in memory mirroring, including forgetting**: adds/replaces to Hermes's own `MEMORY.md`/`USER.md` are mirrored to Cloudflare, replaces retire the superseded copy, and removals propagate as best-effort deletes — "forget" works end-to-end, which no other bundled provider does.
 - **A system-prompt policy block** telling the model when to recall and what is worth remembering.
 - **Secret redaction**: common API-key/token patterns are scrubbed before anything leaves the machine.
 
@@ -87,7 +87,7 @@ Gateway user IDs are sanitized before use in profile names; any ID that sanitiza
 | `on_session_switch(new_session_id)` | Flushes the old session's buffered turns, then adopts the new session ID |
 | `on_session_end(messages)` | Flushes any remaining buffered turns |
 | `on_pre_compress(messages)` | Flushes before context compression so turns aren't lost with the compressed transcript |
-| `on_memory_write(action, target, content)` | Mirrors built-in memory adds/replaces to Cloudflare in the background |
+| `on_memory_write(action, target, content, metadata)` | Mirrors built-in memory writes in the background: adds are remembered, replaces retire the old copy first, and removes propagate as deletes (only ever on a single confident match — ambiguity fails safe) |
 | `shutdown()` | Final flush |
 
 Writes are disabled entirely in non-primary agent contexts (`cron`, `flush`, `subagent`) so scheduled jobs and subagent chatter never pollute a person's memory. Failed background flushes re-queue their messages for the next checkpoint rather than dropping them, and interleaved sessions each flush under their own session ID.

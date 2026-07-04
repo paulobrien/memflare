@@ -64,6 +64,10 @@ def _redact(text):
     return text
 
 
+def _normalize_text(value):
+    return " ".join(str(value or "").split()).lower()
+
+
 class MemflareMemoryProvider(MemoryProvider):
     def __init__(self):
         self._client = None
@@ -77,6 +81,7 @@ class MemflareMemoryProvider(MemoryProvider):
         self._buffer = []
         self._lock = threading.Lock()
         self._flush_thread = None
+        self._mirror_thread = None
         # queue_prefetch() populates this cache in the background; prefetch()
         # consumes it on the next turn so the hot path stays fast.
         self._prefetch_query = None
@@ -262,21 +267,67 @@ class MemflareMemoryProvider(MemoryProvider):
         return ""
 
     def on_memory_write(self, action, target, content, metadata=None, **kwargs):
-        """Mirror built-in MEMORY.md/USER.md writes into Cloudflare."""
-        if not self._write_enabled or action not in ("add", "replace") or not content:
+        """Mirror built-in MEMORY.md/USER.md writes into Cloudflare — including
+        removals, so "forget" propagates end-to-end."""
+        if not self._write_enabled:
             return
-        thread = threading.Thread(
-            target=self._remember_quietly, args=(content,), daemon=True,
-        )
-        thread.start()
+        if action == "remove":
+            if content:
+                self._mirror_async(self._forget_quietly, content)
+            return
+        if action not in ("add", "replace") or not content:
+            return
+        old_text = (metadata or {}).get("old_text")
+        if action == "replace" and old_text:
+            self._mirror_async(self._replace_quietly, old_text, content)
+        else:
+            self._mirror_async(self._remember_quietly, content)
 
     def shutdown(self, **kwargs):
         self._flush()
+
+    def _mirror_async(self, target, *args):
+        self._mirror_thread = threading.Thread(target=target, args=args, daemon=True)
+        self._mirror_thread.start()
 
     def _remember_quietly(self, content):
         try:
             self._client.remember(self._profile, _redact(str(content)),
                                   session_id=self._session_id or None)
+        except Exception:
+            pass
+
+    def _replace_quietly(self, old_text, content):
+        """A built-in replace supersedes the old entry: retire the stale
+        mirrored copy, then store the new one."""
+        self._forget_quietly(old_text)
+        self._remember_quietly(content)
+
+    def _forget_quietly(self, content):
+        """Best-effort propagation of a built-in memory removal: find the one
+        stored memory matching the removed text and delete it. Deletes ONLY on
+        a single confident match — ambiguity or no match fails safe (nothing
+        deleted), because deleting the wrong memory is worse than keeping a
+        stale one."""
+        try:
+            needle = _normalize_text(content)
+            if len(needle) < 8:
+                return  # too short to match confidently
+            match, cursor = None, None
+            for _ in range(5):  # bounded pagination
+                page = self._client.list_memories(self._profile, per_page=100, cursor=cursor)
+                for memory in page.get("result") or []:
+                    text = _normalize_text(memory.get("content") or memory.get("text") or "")
+                    if text and (needle in text or text in needle):
+                        if match is not None:
+                            return  # ambiguous — fail safe
+                        match = memory
+                cursor = (page.get("result_info") or {}).get("cursor")
+                if not cursor:
+                    break
+            memory_id = (match or {}).get("id") or (match or {}).get("memory_id")
+            if memory_id:
+                self._client.delete_memory(self._profile, memory_id)
         except Exception:
             pass
 

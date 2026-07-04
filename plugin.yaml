@@ -1,5 +1,5 @@
 name: memflare
-version: 0.3.0
+version: 0.4.0
 description: "Durable cross-session memory backed by Cloudflare Agent Memory (private beta)."
 author: Paul O'Brien
 provides_tools:

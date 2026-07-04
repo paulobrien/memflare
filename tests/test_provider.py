@@ -13,6 +13,7 @@ import __init__ as memflare  # noqa: E402  (plugin package loaded flat for tests
 class FakeClient:
     def __init__(self):
         self.calls = []
+        self.memories = []
 
     def recall(self, profile, query, **kwargs):
         self.calls.append(("recall", profile, query, kwargs))
@@ -27,13 +28,14 @@ class FakeClient:
 
     def list_memories(self, profile, **kwargs):
         self.calls.append(("list", profile, kwargs))
-        return {"result": [], "result_info": {}}
+        return {"result": list(self.memories), "result_info": {}}
 
     def get_memory(self, profile, memory_id):
         return {"id": memory_id}
 
     def delete_memory(self, profile, memory_id):
         self.calls.append(("delete", profile, memory_id))
+        self.memories = [m for m in self.memories if m.get("id") != memory_id]
 
     def get_summary(self, profile, session_id=None):
         return {"summary": "# Memory"}
@@ -111,10 +113,56 @@ class ProviderTests(unittest.TestCase):
     def test_on_memory_write_mirrors_to_remember(self):
         provider = make_provider()
         provider.on_memory_write("add", "MEMORY.md", "User prefers dark mode.")
-        for thread in list(__import__("threading").enumerate()):
-            if thread.daemon and thread.name.startswith("Thread"):
-                thread.join(timeout=5)
+        provider._mirror_thread.join(timeout=5)
         remembers = [c for c in provider._client.calls if c[0] == "remember"]
+        self.assertEqual(len(remembers), 1)
+        self.assertEqual(remembers[0][2], "User prefers dark mode.")
+
+    def test_remove_propagates_as_delete_on_single_confident_match(self):
+        provider = make_provider()
+        provider._client.memories = [
+            {"id": "mem-1", "content": "User works at Initech."},
+            {"id": "mem-2", "content": "User prefers dark mode."},
+        ]
+        provider.on_memory_write("remove", "user", "User works at Initech.")
+        provider._mirror_thread.join(timeout=5)
+        deletes = [c for c in provider._client.calls if c[0] == "delete"]
+        self.assertEqual(deletes, [("delete", "hermes", "mem-1")])
+
+    def test_remove_fails_safe_on_ambiguous_or_missing_match(self):
+        provider = make_provider()
+        provider._client.memories = [
+            {"id": "mem-1", "content": "User works at Initech in Austin."},
+            {"id": "mem-2", "content": "User works at Initech in Dallas."},
+        ]
+        provider.on_memory_write("remove", "user", "User works at Initech")
+        provider._mirror_thread.join(timeout=5)
+        # Two candidate matches — ambiguity must delete nothing.
+        self.assertEqual([c for c in provider._client.calls if c[0] == "delete"], [])
+
+        provider._client.calls.clear()
+        provider.on_memory_write("remove", "user", "Something never stored anywhere.")
+        provider._mirror_thread.join(timeout=5)
+        self.assertEqual([c for c in provider._client.calls if c[0] == "delete"], [])
+
+        # Too-short content must never trigger a scan-and-delete.
+        provider.on_memory_write("remove", "user", "abc")
+        provider._mirror_thread.join(timeout=5)
+        self.assertEqual([c for c in provider._client.calls if c[0] == "delete"], [])
+
+    def test_replace_retires_old_copy_then_stores_new(self):
+        provider = make_provider()
+        provider._client.memories = [
+            {"id": "mem-1", "content": "User prefers light mode."},
+        ]
+        provider.on_memory_write(
+            "replace", "user", "User prefers dark mode.",
+            metadata={"old_text": "User prefers light mode."},
+        )
+        provider._mirror_thread.join(timeout=5)
+        deletes = [c for c in provider._client.calls if c[0] == "delete"]
+        remembers = [c for c in provider._client.calls if c[0] == "remember"]
+        self.assertEqual(deletes, [("delete", "hermes", "mem-1")])
         self.assertEqual(len(remembers), 1)
         self.assertEqual(remembers[0][2], "User prefers dark mode.")
 
