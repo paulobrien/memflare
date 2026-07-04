@@ -4,6 +4,8 @@ Memflare is a [Hermes Agent](https://hermes-agent.nousresearch.com/) **memory pr
 
 Cloudflare Agent Memory is in private beta. Memflare follows the public beta docs; re-verify API behavior before relying on it in production.
 
+**Full documentation lives in the [project wiki](../../wiki)** (user guide: installation, configuration, tools, troubleshooting; developer guide: architecture, provider contract, client reference).
+
 ## What it does
 
 Once active, Hermes automatically gets:
