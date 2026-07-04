@@ -22,4 +22,4 @@ requires_env:
     secret: true
     url: "https://dash.cloudflare.com/profile/api-tokens"
   - name: CLOUDFLARE_AGENT_MEMORY_NAMESPACE
-    description: "Agent Memory namespace (create with: npx wrangler agent-memory namespace create <name>)"
+    description: "Agent Memory namespace (create with: wrangler agent-memory namespace create <name>)"

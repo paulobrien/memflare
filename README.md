@@ -27,7 +27,7 @@ Once active, Hermes automatically gets:
 **1. Create a Cloudflare Agent Memory namespace** (once per environment):
 
 ```sh
-npx wrangler agent-memory namespace create hermes-prod
+wrangler agent-memory namespace create hermes-prod
 ```
 
 Wrangler's output table shows a `namespace_id` — you won't need it. Memflare (and the Cloudflare API) address namespaces by **name** (`hermes-prod` here), so that's the value to use everywhere below.
