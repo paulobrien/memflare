@@ -79,17 +79,28 @@ def validate_namespace(name):
     return name
 
 
+# Cloudflare's profile-name rule (from the API, not the limits docs):
+# "name must only contain lowercase alphanumeric characters and embedded hyphens"
+_PROFILE_NAME_SHAPE = re.compile(r"^[a-z0-9]+(-[a-z0-9]+)*$")
+
+
 def validate_profile(name):
-    return _require_str(name, "profile", max_chars=LIMITS["profile_name_chars"])
+    _require_str(name, "profile", max_chars=LIMITS["profile_name_chars"])
+    if not _PROFILE_NAME_SHAPE.match(name):
+        raise MemflareError(
+            f"profile '{name}' is invalid: Cloudflare profile names must contain only "
+            "lowercase letters, digits, and embedded hyphens (e.g. hermes-prod)."
+        )
+    return name
 
 
 def sanitize_profile_component(value, max_chars=LIMITS["profile_name_chars"]):
     """Make an arbitrary identifier (gateway user ID, etc.) safe for use inside
-    a profile name. Any identifier sanitization ALTERS gets a stable hash suffix
-    so distinct raw IDs (e.g. 'user 1' vs 'user@1') can never collapse into the
-    same profile."""
+    a Cloudflare profile name (lowercase alphanumeric + embedded hyphens). Any
+    identifier sanitization ALTERS gets a stable hash suffix so distinct raw IDs
+    (e.g. 'User1' vs 'user-1') can never collapse into the same profile."""
     raw = str(value or "").strip()
-    normalized = re.sub(r"[^A-Za-z0-9._:-]+", "-", raw).strip("-")
+    normalized = re.sub(r"-{2,}", "-", re.sub(r"[^a-z0-9-]+", "-", raw.lower())).strip("-")
     if not normalized:
         raise MemflareError("profile component must contain usable characters.")
     suffix = "-" + _fnv1a_hex(raw)[:8]
@@ -97,7 +108,7 @@ def sanitize_profile_component(value, max_chars=LIMITS["profile_name_chars"]):
         return _fnv1a_hex(raw)[:max(max_chars, 1)]
     if normalized == raw and len(normalized) <= max_chars:
         return normalized
-    return normalized[: max_chars - len(suffix)] + suffix
+    return normalized[: max_chars - len(suffix)].rstrip("-") + suffix
 
 
 def _fnv1a_hex(value):

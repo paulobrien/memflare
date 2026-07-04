@@ -10,7 +10,7 @@ Cloudflare Agent Memory is in private beta. Memflare follows the public beta doc
 
 Once active, Hermes automatically gets:
 
-- **Per-person memory isolation**: when Hermes supplies a gateway user identity (Telegram/Discord/Slack), memory is scoped to `<profile>:<user_id>` — participants in group chats never read or write each other's memory. Single-user CLI sessions use the configured base profile directly.
+- **Per-person memory isolation**: when Hermes supplies a gateway user identity (Telegram/Discord/Slack), memory is scoped to `<profile>-<user_id>` — participants in group chats never read or write each other's memory. Single-user CLI sessions use the configured base profile directly.
 - **Memory tools** the model can call: `memory_recall`, `memory_list`, `memory_get`, `memory_summary`, `memory_remember`, `memory_delete`.
 - **Automatic checkpoint ingestion**: conversation turns are buffered and ingested in the background (non-blocking), letting Cloudflare extract durable facts, events, instructions, and tasks. Cloudflare's `ingest` is idempotent, so checkpoints never create duplicates.
 - **Full built-in memory mirroring, including forgetting**: adds/replaces to Hermes's own `MEMORY.md`/`USER.md` are mirrored to Cloudflare, replaces retire the superseded copy, and removals propagate as best-effort deletes — "forget" works end-to-end, which no other bundled provider does.
@@ -70,7 +70,7 @@ Cloudflare Agent Memory stores data as `namespace > profile > session > memories
 | Cloudflare concept | Memflare usage |
 | --- | --- |
 | Namespace | One per environment (e.g. `hermes-dev`, `hermes-prod`), set in config |
-| Profile | **One per person**: `<base>:<user_id>` for gateway users, the base `profile` config value (default `hermes`) for single-user CLI |
+| Profile | **One per person**: `<base>-<user_id>` for gateway users, the base `profile` config value (default `hermes`) for single-user CLI |
 | Session | The Hermes session ID, captured per turn (interleaved chats never mis-tag) |
 | Memory types | `fact`, `event`, `instruction`, `task` (Cloudflare-classified) |
 

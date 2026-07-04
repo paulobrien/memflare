@@ -205,7 +205,7 @@ class ProviderTests(unittest.TestCase):
         with unittest.mock.patch.dict("os.environ", env, clear=False):
             gateway = memflare.MemflareMemoryProvider()
             gateway.initialize("sess-1", hermes_home=None, user_id="tg-12345")
-            self.assertEqual(gateway._profile, "hermes:tg-12345")
+            self.assertEqual(gateway._profile, "hermes-tg-12345")
 
             other = memflare.MemflareMemoryProvider()
             other.initialize("sess-2", hermes_home=None, user_id="tg-67890")
@@ -221,6 +221,19 @@ class ProviderTests(unittest.TestCase):
             b = memflare.MemflareMemoryProvider()
             b.initialize("s", hermes_home=None, user_id="user@1")
             self.assertNotEqual(a._profile, b._profile)
+
+            # Uppercase IDs (Discord snowflakes are fine, but e.g. Matrix IDs
+            # aren't) must lowercase safely and still stay distinct.
+            upper = memflare.MemflareMemoryProvider()
+            upper.initialize("s", hermes_home=None, user_id="User1")
+            lower = memflare.MemflareMemoryProvider()
+            lower.initialize("s", hermes_home=None, user_id="user1")
+            self.assertNotEqual(upper._profile, lower._profile)
+
+            # Every derived profile must satisfy Cloudflare's charset rule.
+            from client import validate_profile
+            for provider in (gateway, other, cli, a, b, upper, lower):
+                validate_profile(provider._profile)
 
     def test_non_primary_contexts_never_write(self):
         env = {

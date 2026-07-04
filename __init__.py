@@ -6,7 +6,7 @@ Activate with:
 
 Isolation model: memory is scoped per PERSON. When Hermes supplies a gateway
 user identity (Telegram/Discord/Slack sessions), the Cloudflare profile is
-derived as "<base>:<user_id>" so participants in shared chats never read or
+derived as "<base>-<user_id>" so participants in shared chats never read or
 write each other's memory. Without a user identity (single-user CLI), the
 configured base profile is used directly.
 """
@@ -148,8 +148,9 @@ class MemflareMemoryProvider(MemoryProvider):
             {
                 "key": "profile",
                 "description": (
-                    "Base memory profile. Gateway users are isolated automatically "
-                    "as <profile>:<user_id>; single-user CLI uses this value directly"
+                    "Base memory profile (lowercase letters, digits, hyphens). "
+                    "Gateway users are isolated automatically as <profile>-<user_id>; "
+                    "single-user CLI uses this value directly"
                 ),
                 "default": "hermes",
                 "required": False,
@@ -180,8 +181,10 @@ class MemflareMemoryProvider(MemoryProvider):
         )
 
     def _resolve_profile(self, config, kwargs):
-        """Per-person isolation: '<base>:<user_id>' when Hermes supplies a
-        gateway user identity, the base profile alone otherwise (CLI)."""
+        """Per-person isolation: '<base>-<user_id>' when Hermes supplies a
+        gateway user identity, the base profile alone otherwise (CLI).
+        Hyphen-joined because Cloudflare profile names allow only lowercase
+        alphanumerics and embedded hyphens."""
         user_id = kwargs.get("user_id") or kwargs.get("user_id_alt")
         if not user_id:
             return self._base_profile
@@ -189,7 +192,7 @@ class MemflareMemoryProvider(MemoryProvider):
             user_id,
             max_chars=LIMITS["profile_name_chars"] - len(self._base_profile) - 1,
         )
-        return f"{self._base_profile}:{component}"
+        return f"{self._base_profile}-{component}"
 
     def _load_config(self, hermes_home):
         if not hermes_home:
