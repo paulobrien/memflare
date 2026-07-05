@@ -37,7 +37,7 @@ Wrangler's output table shows a `namespace_id` — you won't need it. cfam-herme
 
 ```sh
 git clone <this-repo-url> ~/.hermes/plugins/memory/cfam-hermes-agent
-hermes plugins enable cfam-hermes-agent
+hermes plugins enable cfam-hermes-agent   # user-dir installs only; skip for in-tree
 ```
 
 **3. Activate it as the memory provider:**
