@@ -16,6 +16,7 @@ Once active, Hermes automatically gets:
 - **Full built-in memory mirroring, including forgetting**: adds/replaces to Hermes's own `MEMORY.md`/`USER.md` are mirrored to Cloudflare, replaces retire the superseded copy, and removals propagate as best-effort deletes — "forget" works end-to-end, which no other bundled provider does.
 - **A system-prompt policy block** telling the model when to recall and what is worth remembering.
 - **Secret redaction**: common API-key/token patterns are scrubbed before anything leaves the machine.
+- **Prompt-injection defense**: directive-shaped content ("ignore previous instructions…") is rejected at explicit store time, dropped from silently-injected prefetch context, and flagged as untrusted on tool-path recall — planted instructions in a group chat can't ride memory back into the prompt.
 
 ## Requirements
 
