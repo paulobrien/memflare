@@ -32,7 +32,7 @@ MESSAGE_ROLES = ("system", "user", "assistant")
 RETRYABLE_STATUS_CODES = frozenset({408, 425, 429, 500, 502, 503, 504})
 
 
-class MemflareError(Exception):
+class CfamError(Exception):
     def __init__(self, message, status=None, code=None, errors=None):
         super().__init__(message)
         self.status = status
@@ -56,11 +56,11 @@ class MemflareError(Exception):
 
 def _require_str(value, field, max_chars=None, max_bytes=None):
     if not isinstance(value, str) or not value.strip():
-        raise MemflareError(f"{field} must be a non-empty string.")
+        raise CfamError(f"{field} must be a non-empty string.")
     if max_chars is not None and len(value) > max_chars:
-        raise MemflareError(f"{field} must be {max_chars} characters or fewer.")
+        raise CfamError(f"{field} must be {max_chars} characters or fewer.")
     if max_bytes is not None and len(value.encode("utf-8")) > max_bytes:
-        raise MemflareError(f"{field} must be {max_bytes} UTF-8 bytes or fewer.")
+        raise CfamError(f"{field} must be {max_bytes} UTF-8 bytes or fewer.")
     return value
 
 
@@ -72,7 +72,7 @@ _NAMESPACE_ID_SHAPE = re.compile(r"^[0-9][0-9A-HJKMNP-TV-Za-hjkmnp-tv-z]{25}$")
 def validate_namespace(name):
     _require_str(name, "namespace", max_chars=LIMITS["namespace_name_chars"])
     if _NAMESPACE_ID_SHAPE.match(name):
-        raise MemflareError(
+        raise CfamError(
             f"namespace '{name}' looks like a namespace_id. Use the namespace NAME "
             "(e.g. hermes-prod) — the Cloudflare API addresses namespaces by name."
         )
@@ -87,7 +87,7 @@ _PROFILE_NAME_SHAPE = re.compile(r"^[a-z0-9]+(-[a-z0-9]+)*$")
 def validate_profile(name):
     _require_str(name, "profile", max_chars=LIMITS["profile_name_chars"])
     if not _PROFILE_NAME_SHAPE.match(name):
-        raise MemflareError(
+        raise CfamError(
             f"profile '{name}' is invalid: Cloudflare profile names must contain only "
             "lowercase letters, digits, and embedded hyphens (e.g. hermes-prod)."
         )
@@ -102,7 +102,7 @@ def sanitize_profile_component(value, max_chars=LIMITS["profile_name_chars"]):
     raw = str(value or "").strip()
     normalized = re.sub(r"-{2,}", "-", re.sub(r"[^a-z0-9-]+", "-", raw.lower())).strip("-")
     if not normalized:
-        raise MemflareError("profile component must contain usable characters.")
+        raise CfamError("profile component must contain usable characters.")
     suffix = "-" + _fnv1a_hex(raw)[:8]
     if max_chars <= len(suffix):
         return _fnv1a_hex(raw)[:max(max_chars, 1)]
@@ -136,18 +136,18 @@ def clip_session_id(value, max_chars=LIMITS["session_id_chars"]):
 
 def normalize_messages(messages):
     if not isinstance(messages, list) or not messages:
-        raise MemflareError("messages must be a non-empty list.")
+        raise CfamError("messages must be a non-empty list.")
     if len(messages) > LIMITS["messages_per_ingest"]:
-        raise MemflareError(
+        raise CfamError(
             f"messages must contain {LIMITS['messages_per_ingest']} or fewer per ingest call."
         )
     normalized = []
     for index, message in enumerate(messages):
         if not isinstance(message, dict):
-            raise MemflareError(f"messages[{index}] must be an object.")
+            raise CfamError(f"messages[{index}] must be an object.")
         role = message.get("role")
         if role not in MESSAGE_ROLES:
-            raise MemflareError(f"messages[{index}].role must be one of {MESSAGE_ROLES}.")
+            raise CfamError(f"messages[{index}].role must be one of {MESSAGE_ROLES}.")
         content = _require_str(
             message.get("content"),
             f"messages[{index}].content",
@@ -160,7 +160,7 @@ def normalize_messages(messages):
     return normalized
 
 
-class MemflareClient:
+class CfamClient:
     def __init__(self, account_id, api_token, namespace,
                  base_url=CLOUDFLARE_API_BASE_URL, timeout=15.0, retries=2):
         self.account_id = _require_str(account_id, "account_id")
@@ -185,12 +185,12 @@ class MemflareClient:
         name = validate_namespace(name or self.namespace)
         try:
             return self.get_namespace(name)
-        except MemflareError as error:
+        except CfamError as error:
             if not error.is_not_found:
                 raise
         try:
             return self.create_namespace(name)
-        except MemflareError as error:
+        except CfamError as error:
             if error.is_conflict:
                 return self.get_namespace(name)
             raise
@@ -218,11 +218,11 @@ class MemflareClient:
         body = {"query": _require_str(query, "query", max_bytes=LIMITS["recall_query_bytes"])}
         if thinking_level:
             if thinking_level not in ("low", "medium", "high"):
-                raise MemflareError("thinkingLevel must be low, medium, or high.")
+                raise CfamError("thinkingLevel must be low, medium, or high.")
             body["thinkingLevel"] = thinking_level
         if response_length:
             if response_length not in ("short", "medium", "long"):
-                raise MemflareError("responseLength must be short, medium, or long.")
+                raise CfamError("responseLength must be short, medium, or long.")
             body["responseLength"] = response_length
         if reference_date:
             body["referenceDate"] = str(reference_date)
@@ -233,12 +233,12 @@ class MemflareClient:
         if not isinstance(per_page, int) or not (
             LIMITS["list_page_size_min"] <= per_page <= LIMITS["list_page_size_max"]
         ):
-            raise MemflareError(
+            raise CfamError(
                 f"per_page must be an integer between {LIMITS['list_page_size_min']} "
                 f"and {LIMITS['list_page_size_max']}."
             )
         if memory_type is not None and memory_type not in MEMORY_TYPES:
-            raise MemflareError(f"type must be one of {MEMORY_TYPES}.")
+            raise CfamError(f"type must be one of {MEMORY_TYPES}.")
         query = {"per_page": per_page}
         if validate_session_id(session_id):
             query["session_id"] = session_id
@@ -263,7 +263,7 @@ class MemflareClient:
     def delete_session(self, profile, session_id):
         session_id = validate_session_id(session_id)
         if not session_id:
-            raise MemflareError("session_id is required.")
+            raise CfamError("session_id is required.")
         return self._request(
             "DELETE", self._profile_path(profile, f"/sessions/{_seg(session_id)}"),
         )
@@ -301,7 +301,7 @@ class MemflareClient:
                 if status >= 400 or payload.get("success") is False:
                     errors = payload.get("errors") or []
                     message = errors[0].get("message") if errors else f"HTTP {status}"
-                    raise MemflareError(
+                    raise CfamError(
                         f"Cloudflare Agent Memory request failed: {message}",
                         status=status,
                         code=errors[0].get("code") if errors else None,
@@ -313,14 +313,14 @@ class MemflareClient:
                         "result_info": payload.get("result_info"),
                     }
                 return payload.get("result")
-            except MemflareError as error:
+            except CfamError as error:
                 last_error = error
                 if attempt >= max_attempts - 1 or (error.status is not None and not error.is_retryable):
                     raise
             except OSError as error:
                 # URLError, TimeoutError, ConnectionError, and pre-3.10
                 # socket.timeout are all OSError subclasses.
-                last_error = MemflareError(f"Cloudflare Agent Memory request failed: {error}")
+                last_error = CfamError(f"Cloudflare Agent Memory request failed: {error}")
                 if attempt >= max_attempts - 1:
                     raise last_error from error
             time.sleep(min(self.retry_backoff * 2 ** attempt, 8.0))

@@ -1,8 +1,8 @@
-"""Memflare — Hermes Agent memory provider backed by Cloudflare Agent Memory.
+"""cfam-hermes-agent — Hermes Agent memory provider backed by Cloudflare Agent Memory.
 
 Activate with:
     hermes memory setup            # interactive
-    hermes config set memory.provider memflare
+    hermes config set memory.provider cfam-hermes-agent
 
 Isolation model: memory is scoped per PERSON. When Hermes supplies a gateway
 user identity (Telegram/Discord/Slack sessions), the Cloudflare profile is
@@ -19,8 +19,8 @@ import threading
 try:
     from .client import (
         LIMITS,
-        MemflareClient,
-        MemflareError,
+        CfamClient,
+        CfamError,
         clip_session_id,
         sanitize_profile_component,
     )
@@ -28,8 +28,8 @@ try:
 except ImportError:  # loaded flat (tests / direct execution) rather than as a package
     from client import (
         LIMITS,
-        MemflareClient,
-        MemflareError,
+        CfamClient,
+        CfamError,
         clip_session_id,
         sanitize_profile_component,
     )
@@ -40,7 +40,8 @@ try:
 except ImportError:  # outside a Hermes runtime (tests, tooling)
     MemoryProvider = object
 
-CONFIG_FILENAME = "memflare.json"
+CONFIG_FILENAME = "cfam-hermes-agent.json"
+LEGACY_CONFIG_FILENAME = "memflare.json"  # pre-rebrand installs; read-only fallback
 FLUSH_THRESHOLD_MESSAGES = 12
 
 # Writes are disabled outside primary agent contexts: cron system prompts and
@@ -75,7 +76,7 @@ def _normalize_text(value):
     return " ".join(str(value or "").split()).lower()
 
 
-class MemflareMemoryProvider(MemoryProvider):
+class CfamMemoryProvider(MemoryProvider):
     def __init__(self):
         self._client = None
         self._base_profile = "hermes"
@@ -99,7 +100,7 @@ class MemflareMemoryProvider(MemoryProvider):
 
     @property
     def name(self):
-        return "memflare"
+        return "cfam-hermes-agent"
 
     def is_available(self, **kwargs):
         """Config presence only — must not make network calls."""
@@ -173,7 +174,7 @@ class MemflareMemoryProvider(MemoryProvider):
         config = self._load_config(self._hermes_home)
         self._base_profile = config.get("profile") or "hermes"
         self._profile = self._resolve_profile(config, kwargs)
-        self._client = MemflareClient(
+        self._client = CfamClient(
             account_id=config.get("account_id") or os.environ.get("CLOUDFLARE_ACCOUNT_ID"),
             api_token=os.environ.get("CLOUDFLARE_API_TOKEN") or config.get("api_token"),
             namespace=config.get("namespace")
@@ -197,12 +198,14 @@ class MemflareMemoryProvider(MemoryProvider):
     def _load_config(self, hermes_home):
         if not hermes_home:
             return {}
-        path = os.path.join(hermes_home, CONFIG_FILENAME)
-        try:
-            with open(path, "r", encoding="utf-8") as handle:
-                return json.load(handle)
-        except (OSError, ValueError):
-            return {}
+        for filename in (CONFIG_FILENAME, LEGACY_CONFIG_FILENAME):
+            path = os.path.join(hermes_home, filename)
+            try:
+                with open(path, "r", encoding="utf-8") as handle:
+                    return json.load(handle)
+            except (OSError, ValueError):
+                continue
+        return {}
 
     @staticmethod
     def _clip_session(session_id):
@@ -381,15 +384,15 @@ class MemflareMemoryProvider(MemoryProvider):
         args = args or {}
         try:
             if self._client is None:
-                return json.dumps({"error": "Memflare is not initialized. Run: hermes memory setup"})
+                return json.dumps({"error": "cfam-hermes-agent is not initialized. Run: hermes memory setup"})
             handler = getattr(self, f"_tool_{tool_name}", None)
             if handler is None:
-                return json.dumps({"error": f"Unknown memflare tool: {tool_name}"})
+                return json.dumps({"error": f"Unknown cfam-hermes-agent tool: {tool_name}"})
             return json.dumps(handler(args))
-        except MemflareError as error:
+        except CfamError as error:
             return json.dumps({"error": str(error), "status": error.status})
         except Exception as error:  # never raise into the agent loop
-            return json.dumps({"error": f"Unexpected memflare failure: {error}"})
+            return json.dumps({"error": f"Unexpected cfam-hermes-agent failure: {error}"})
 
     def _tool_memory_recall(self, args):
         return self._client.recall(
@@ -430,11 +433,11 @@ class MemflareMemoryProvider(MemoryProvider):
 
     def _assert_writes_allowed(self):
         if not self._write_enabled:
-            raise MemflareError(
+            raise CfamError(
                 "Memory writes are disabled in cron/flush/subagent contexts."
             )
 
 
 def register(ctx):
     """Hermes plugin entry point."""
-    ctx.register_memory_provider(MemflareMemoryProvider())
+    ctx.register_memory_provider(CfamMemoryProvider())

@@ -5,11 +5,11 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from client import LIMITS, MemflareClient, MemflareError  # noqa: E402
+from client import LIMITS, CfamClient, CfamError  # noqa: E402
 
 
 def make_client(responder):
-    client = MemflareClient(
+    client = CfamClient(
         account_id="acct-123", api_token="token-123", namespace="hermes-prod",
     )
     client._send = responder
@@ -54,21 +54,21 @@ class ClientTests(unittest.TestCase):
             raise AssertionError("must not send")
 
         client = make_client(responder)
-        with self.assertRaisesRegex(MemflareError, "1024 UTF-8 bytes"):
+        with self.assertRaisesRegex(CfamError, "1024 UTF-8 bytes"):
             client.recall("user-42", "x" * (LIMITS["recall_query_bytes"] + 1))
-        with self.assertRaisesRegex(MemflareError, "non-empty list"):
+        with self.assertRaisesRegex(CfamError, "non-empty list"):
             client.ingest("user-42", [])
 
     def test_rejects_namespace_id_instead_of_name(self):
-        with self.assertRaisesRegex(MemflareError, "looks like a namespace_id"):
-            MemflareClient(
+        with self.assertRaisesRegex(CfamError, "looks like a namespace_id"):
+            CfamClient(
                 account_id="acct-123",
                 api_token="token-123",
                 namespace="01KWPF44FYY3Q1NP2N8NX11SBB",
             )
         # A lowercased paste of the same ID is also caught.
-        with self.assertRaisesRegex(MemflareError, "looks like a namespace_id"):
-            MemflareClient(
+        with self.assertRaisesRegex(CfamError, "looks like a namespace_id"):
+            CfamClient(
                 account_id="acct-123",
                 api_token="token-123",
                 namespace="01kwpf44fyy3q1np2n8nx11sbb",
@@ -97,7 +97,7 @@ class ClientTests(unittest.TestCase):
             return 409, {"success": False, "errors": [{"code": 10008, "message": "Conflict"}]}
 
         client = make_client(responder)
-        with self.assertRaises(MemflareError) as caught:
+        with self.assertRaises(CfamError) as caught:
             client.recall("user-42", "preferences")
         self.assertTrue(caught.exception.is_conflict)
         self.assertEqual(calls["n"], 1)
@@ -110,7 +110,7 @@ class ClientTests(unittest.TestCase):
             return 500, {"success": False, "errors": [{"message": "boom"}]}
 
         client = make_client(responder)
-        with self.assertRaises(MemflareError):
+        with self.assertRaises(CfamError):
             client.remember("user-42", "The user prefers concise answers.")
         self.assertEqual(calls["n"], 1)
 

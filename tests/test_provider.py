@@ -7,7 +7,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-import __init__ as memflare  # noqa: E402  (plugin package loaded flat for tests)
+import __init__ as cfam  # noqa: E402  (plugin package loaded flat for tests)
 
 
 class FakeClient:
@@ -42,7 +42,7 @@ class FakeClient:
 
 
 def make_provider():
-    provider = memflare.MemflareMemoryProvider()
+    provider = cfam.CfamMemoryProvider()
     provider._client = FakeClient()
     provider._profile = "hermes"
     provider._session_id = "sess-1"
@@ -67,9 +67,9 @@ class ProviderTests(unittest.TestCase):
         self.assertIn("error", json.loads(raw))
 
         raw = provider.handle_tool_call("nonexistent_tool", {})
-        self.assertIn("Unknown memflare tool", json.loads(raw)["error"])
+        self.assertIn("Unknown cfam-hermes-agent tool", json.loads(raw)["error"])
 
-        uninitialized = memflare.MemflareMemoryProvider()
+        uninitialized = cfam.CfamMemoryProvider()
         raw = uninitialized.handle_tool_call("memory_recall", {"query": "x"})
         self.assertIn("not initialized", json.loads(raw)["error"])
 
@@ -83,14 +83,14 @@ class ProviderTests(unittest.TestCase):
 
     def test_sync_turn_buffers_and_flushes_at_threshold(self):
         provider = make_provider()
-        for i in range(memflare.FLUSH_THRESHOLD_MESSAGES // 2):
+        for i in range(cfam.FLUSH_THRESHOLD_MESSAGES // 2):
             provider.sync_turn(f"question {i}", f"answer {i}")
         if provider._flush_thread:
             provider._flush_thread.join(timeout=5)
 
         ingests = [c for c in provider._client.calls if c[0] == "ingest"]
         self.assertEqual(len(ingests), 1)
-        self.assertEqual(len(ingests[0][2]), memflare.FLUSH_THRESHOLD_MESSAGES)
+        self.assertEqual(len(ingests[0][2]), cfam.FLUSH_THRESHOLD_MESSAGES)
         self.assertEqual(ingests[0][3], "sess-1")
         self.assertEqual(len(provider._buffer), 0)
 
@@ -98,7 +98,7 @@ class ProviderTests(unittest.TestCase):
         provider = make_provider()
 
         def failing_ingest(*args, **kwargs):
-            raise memflare.MemflareError("boom", status=503)
+            raise cfam.CfamError("boom", status=503)
 
         provider._client.ingest = failing_ingest
         provider.sync_turn("hello", "hi")
@@ -176,7 +176,7 @@ class ProviderTests(unittest.TestCase):
         self.assertEqual(provider.prefetch("preferences"), "")
 
     def test_config_roundtrip_and_availability(self):
-        provider = memflare.MemflareMemoryProvider()
+        provider = cfam.CfamMemoryProvider()
         with tempfile.TemporaryDirectory() as home:
             provider.save_config(
                 {"account_id": "acct-1", "namespace": "hermes-prod", "profile": "me"},
@@ -187,7 +187,7 @@ class ProviderTests(unittest.TestCase):
             self.assertEqual(config["profile"], "me")
 
     def test_is_available_reads_config_before_initialize(self):
-        provider = memflare.MemflareMemoryProvider()
+        provider = cfam.CfamMemoryProvider()
         with tempfile.TemporaryDirectory() as home:
             provider.save_config({"account_id": "acct-1", "namespace": "ns"}, home)
             env = {"HERMES_HOME": home, "CLOUDFLARE_API_TOKEN": "token-1"}
@@ -203,30 +203,30 @@ class ProviderTests(unittest.TestCase):
             "CLOUDFLARE_AGENT_MEMORY_NAMESPACE": "hermes-prod",
         }
         with unittest.mock.patch.dict("os.environ", env, clear=False):
-            gateway = memflare.MemflareMemoryProvider()
+            gateway = cfam.CfamMemoryProvider()
             gateway.initialize("sess-1", hermes_home=None, user_id="tg-12345")
             self.assertEqual(gateway._profile, "hermes-tg-12345")
 
-            other = memflare.MemflareMemoryProvider()
+            other = cfam.CfamMemoryProvider()
             other.initialize("sess-2", hermes_home=None, user_id="tg-67890")
             self.assertNotEqual(gateway._profile, other._profile)
 
-            cli = memflare.MemflareMemoryProvider()
+            cli = cfam.CfamMemoryProvider()
             cli.initialize("sess-3", hermes_home=None)
             self.assertEqual(cli._profile, "hermes")
 
             # Sanitized-but-distinct raw IDs must never collapse together.
-            a = memflare.MemflareMemoryProvider()
+            a = cfam.CfamMemoryProvider()
             a.initialize("s", hermes_home=None, user_id="user 1")
-            b = memflare.MemflareMemoryProvider()
+            b = cfam.CfamMemoryProvider()
             b.initialize("s", hermes_home=None, user_id="user@1")
             self.assertNotEqual(a._profile, b._profile)
 
             # Uppercase IDs (Discord snowflakes are fine, but e.g. Matrix IDs
             # aren't) must lowercase safely and still stay distinct.
-            upper = memflare.MemflareMemoryProvider()
+            upper = cfam.CfamMemoryProvider()
             upper.initialize("s", hermes_home=None, user_id="User1")
-            lower = memflare.MemflareMemoryProvider()
+            lower = cfam.CfamMemoryProvider()
             lower.initialize("s", hermes_home=None, user_id="user1")
             self.assertNotEqual(upper._profile, lower._profile)
 
@@ -242,7 +242,7 @@ class ProviderTests(unittest.TestCase):
             "CLOUDFLARE_AGENT_MEMORY_NAMESPACE": "hermes-prod",
         }
         with unittest.mock.patch.dict("os.environ", env, clear=False):
-            provider = memflare.MemflareMemoryProvider()
+            provider = cfam.CfamMemoryProvider()
             provider.initialize("sess-1", hermes_home=None, agent_context="cron")
         provider._client = FakeClient()
 
@@ -336,9 +336,9 @@ class ProviderTests(unittest.TestCase):
             def register_memory_provider(self, provider):
                 registered.append(provider)
 
-        memflare.register(Ctx())
+        cfam.register(Ctx())
         self.assertEqual(len(registered), 1)
-        self.assertEqual(registered[0].name, "memflare")
+        self.assertEqual(registered[0].name, "cfam-hermes-agent")
 
 
 if __name__ == "__main__":

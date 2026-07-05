@@ -1,8 +1,8 @@
-# Memflare
+# cfam-hermes-agent
 
-Memflare is a [Hermes Agent](https://hermes-agent.nousresearch.com/) **memory provider plugin** backed by [Cloudflare Agent Memory](https://developers.cloudflare.com/agent-memory/). It gives Hermes durable, growing memory across sessions without Hermes owning a database, vector index, summarizer, or deduplication pipeline.
+cfam-hermes-agent is a [Hermes Agent](https://hermes-agent.nousresearch.com/) **memory provider plugin** backed by [Cloudflare Agent Memory](https://developers.cloudflare.com/agent-memory/). It gives Hermes durable, growing memory across sessions without Hermes owning a database, vector index, summarizer, or deduplication pipeline.
 
-Cloudflare Agent Memory is in private beta. Memflare follows the public beta docs; re-verify API behavior before relying on it in production.
+Cloudflare Agent Memory is in private beta. cfam-hermes-agent follows the public beta docs; re-verify API behavior before relying on it in production.
 
 **Full documentation lives in the [project wiki](../../wiki)** (user guide: installation, configuration, tools, troubleshooting; developer guide: architecture, provider contract, client reference).
 
@@ -31,43 +31,43 @@ Once active, Hermes automatically gets:
 wrangler agent-memory namespace create hermes-prod
 ```
 
-Wrangler's output table shows a `namespace_id` — you won't need it. Memflare (and the Cloudflare API) address namespaces by **name** (`hermes-prod` here), so that's the value to use everywhere below.
+Wrangler's output table shows a `namespace_id` — you won't need it. cfam-hermes-agent (and the Cloudflare API) address namespaces by **name** (`hermes-prod` here), so that's the value to use everywhere below.
 
 **2. Install the plugin** into the Hermes **memory plugins** directory (note the `memory/` category subdirectory — memory providers are not discovered from the top-level plugins folder):
 
 ```sh
-git clone <this-repo-url> ~/.hermes/plugins/memory/memflare
-hermes plugins enable memflare
+git clone <this-repo-url> ~/.hermes/plugins/memory/cfam-hermes-agent
+hermes plugins enable cfam-hermes-agent
 ```
 
 **3. Activate it as the memory provider:**
 
 ```sh
-hermes memory setup        # interactive picker — choose memflare and enter credentials
+hermes memory setup        # interactive picker — choose cfam-hermes-agent and enter credentials
 ```
 
 or configure directly:
 
 ```sh
-hermes config set memory.provider memflare
+hermes config set memory.provider cfam-hermes-agent
 ```
 
-The setup wizard prompts for the fields from the config schema: your Cloudflare **account ID**, an **API token** with Agent Memory permissions (stored as `CLOUDFLARE_API_TOKEN` in the profile's `.env`), the **namespace name** (not the `namespace_id`), and an optional **profile** name (defaults to `hermes`). Non-secret values are stored in `$HERMES_HOME/memflare.json`, so each Hermes profile keeps isolated memory configuration.
+The setup wizard prompts for the fields from the config schema: your Cloudflare **account ID**, an **API token** with Agent Memory permissions (stored as `CLOUDFLARE_API_TOKEN` in the profile's `.env`), the **namespace name** (not the `namespace_id`), and an optional **profile** name (defaults to `hermes`). Non-secret values are stored in `$HERMES_HOME/cfam-hermes-agent.json`, so each Hermes profile keeps isolated memory configuration.
 
 **4. Verify:**
 
 ```sh
-hermes memory status       # shows memflare as the active provider
-hermes memflare status     # checks Cloudflare connectivity
+hermes memory status       # shows cfam-hermes-agent as the active provider
+hermes cfam-hermes-agent status     # checks Cloudflare connectivity
 ```
 
 Then ask Hermes "what do you remember about me?" and watch for a `memory_recall` call.
 
 ## How memory is organized
 
-Cloudflare Agent Memory stores data as `namespace > profile > session > memories`. Memflare maps:
+Cloudflare Agent Memory stores data as `namespace > profile > session > memories`. cfam-hermes-agent maps:
 
-| Cloudflare concept | Memflare usage |
+| Cloudflare concept | cfam-hermes-agent usage |
 | --- | --- |
 | Namespace | One per environment (e.g. `hermes-dev`, `hermes-prod`), set in config |
 | Profile | **One per person**: `<base>-<user_id>` for gateway users, the base `profile` config value (default `hermes`) for single-user CLI |
@@ -100,7 +100,7 @@ All tool handlers follow the Hermes plugin rules: `handle_tool_call(tool_name, a
 
 ## Limits enforced client-side
 
-Memflare validates the documented Cloudflare limits before making requests:
+cfam-hermes-agent validates the documented Cloudflare limits before making requests:
 
 | Limit | Value |
 | --- | --- |
@@ -129,7 +129,7 @@ plugin.yaml    Plugin manifest (tools, hooks, required env)
 __init__.py    MemoryProvider implementation + register(ctx) entry point
 client.py      Cloudflare Agent Memory HTTP client (stdlib only)
 schemas.py     Flat Hermes tool schemas
-cli.py         `hermes memflare status` CLI subcommand
+cli.py         `hermes cfam-hermes-agent status` CLI subcommand
 tests/         Unit tests (unittest, no network)
 ```
 
