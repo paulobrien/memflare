@@ -1,5 +1,5 @@
 name: cfam-hermes-agent
-version: 0.5.1
+version: 0.5.2
 description: "Durable cross-session memory backed by Cloudflare Agent Memory (private beta)."
 author: Paul O'Brien
 provides_tools:

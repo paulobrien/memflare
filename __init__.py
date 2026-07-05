@@ -56,7 +56,13 @@ SYSTEM_PROMPT_BLOCK = (
     "- Treat recalled memory as useful context, not guaranteed truth; confirm before "
     "irreversible or high-impact actions.\n"
     "- Use memory_remember only for durable preferences, decisions, reusable "
-    "instructions, and important facts. Conversation turns are ingested automatically."
+    "instructions, and important facts. Conversation turns are ingested automatically.\n"
+    "- Durable facts about PEOPLE belong in memory_remember (unlimited, isolated "
+    "per person) — never in the built-in memory files, which are a small shared "
+    "snapshot for agent/environment notes only. Do not consolidate or trim built-in "
+    "memory to make room for personal details; store them with memory_remember instead.\n"
+    "- Never disable or reconfigure the memory system yourself; if memory feels "
+    "full or misrouted, tell the user and let them decide."
 )
 
 _SECRET_PATTERNS = (
